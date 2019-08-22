@@ -253,10 +253,10 @@
             "value": "[parameters('adminPassword')]"
           },
           "VMadminUsername": {
-            "value": "[parameters('adminUsername')]"
+            "value": "[parameters('VMadminUsername')]"
           },
           "VMadminPassword": {
-            "value": "[parameters('adminPassword')]"
+            "value": "[parameters('VMadminPassword')]"
           },
 
           "_artifactsLocation": {
