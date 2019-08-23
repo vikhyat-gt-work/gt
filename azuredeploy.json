@@ -1,241 +1,214 @@
-Cluster Deep Dive:
-
-Management cluster
-Management cluster in a Cluster Set is a Failover Cluster that hosts the highly-available management plane of the entire Cluster Set and the unified storage namespace (CS-Namespace) referral SOFS. A management cluster is logically decoupled from member clusters that run the VM workloads. This makes the Cluster Set management plane resilient to any localized cluster-wide failures, e.g. loss of power of a member cluster.
-Member cluster
-A member cluster in a Cluster Set is typically a traditional hyper-converged cluster running VM and S2D workloads. Multiple member clusters participate in a single Cluster Set deployment, forming the larger SDDC cloud fabric. Member clusters differ from a management cluster in two key aspects: member clusters participate in fault domain and availability set constructs, and member clusters are also sized to host VM and S2D workloads. Cluster Set VMs that move across cluster boundaries in a Cluster Set must not be hosted on the management cluster for this reason).
-Cluster Set namespace referral SOFS
-A Cluster Set namespace referral (CS-Namespace) SOFS is a Scale-Out File Server wherein each SMB Share on the CS-Namespace SOFS is a referral share – of type ‘SimpleReferral’ newly introduced in this Preview release. This referral allows SMB clients access to the target SMB share hosted on the member cluster SOFS (SOFS-1, SOFS-2 etc. in Figure 1). The Cluster Set namespace referral SOFS is a light-weight referral mechanism and as such, does not participate in the IO path. The SMB referrals are cached perpetually on the each of the client nodes and the Cluster Sets namespace infrastructure dynamically automatically updates these referrals as needed.
-Cluster Set Master
-In a Cluster Set, the communication between the member clusters is loosely coupled, and is coordinated by a new cluster resource called “Cluster Set Master” (CS-Master). Like any other cluster resource, CS-Master is highly available and resilient to individual member cluster failures and/or the management cluster node failures. Through a new Cluster Set WMI provider, CS-Master provides the management endpoint for all Cluster Set manageability interactions.
-Cluster Set Worker
-In a Cluster Set deployment, the CS-Master interacts with a new cluster resource on the member Clusters called “Cluster Set Worker” (CS-Worker). CS-Worker acts as the only liaison on the cluster to orchestrate the local cluster interactions as requested by the CS-Master. Examples of such interactions include VM placement and cluster-local resource inventorying. There is only one CS-Worker instance for each of the member clusters in a Cluster Set.
-Logical Fault Domain (LFD)
-Compute fault domains (FDs) may be of two types in a Cluster Set: Logical Fault Domains (LFD) or Node Fault Domains (Node-FD). In either case, a Fault Domain is the grouping of software and hardware artifacts that the administrator determines could fail together when a failure does occur. While an administrator could designate one or more clusters together as a LFD, each node could participate as a Node-FD in Availability Set. Cluster Sets by design leaves the decision of FD boundary determination to the administrator who is well-versed with data center topological considerations – e.g. PDU, networking – that member clusters share.
-Availability Set
-An Availability Set helps the administrator configure desired redundancy of clustered workloads across fault domains, by organizing those FDs into an Availability Set and deploying workloads into that Availability Set. Let’s say if you are deploying a two-tier application, we recommend that you configure at least two virtual machines in an Availability Set for each tier which will ensure that when one FD in that Availability Set goes down, your application will at least have one virtual machine in each tier hosted on a different FD of that same Availability Set.
-
-Practical Implementation:
-https://github.com/Microsoft/WSLab/tree/master/Scenarios/S2D%20and%20Cluster%20Sets
-
-S2D:
-Overview of Storage Spaces Direct 
-
-S2D uses disks that are exclusively connected to one node of a Windows Server 2016 Failover Cluster and allows Storage Spaces to create pools using those disks. Virtual Disks (Spaces) that are configured on the pool will have their redundant data (mirrors or parity) spread across the disks in different nodes of the cluster.  Since copies of the data is distributed, this allows access to data even when a node fails or is shutdown for maintenance.  Documents which go into details on Storage Spaces Direct can be found here http://aka.ms/S2D
-
 {
-  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
-  "contentVersion": "1.0.0.0",
-  "parameters": {
-    "namePrefix": {
-      "type": "string",
-      "minLength": 3,
-      "maxLength": 8,
-      "metadata": {
-        "description": "Naming prefix for each new resource created. 3-char min, 8-char max, lowercase alphanumeric"
-      }
-    },
-    "storageAccountType": {
-      "type": "string",
-      "allowedValues": [
-        "Standard_LRS",
-        "Standard_GRS",
-        "Standard_RAGRS",
-        "Premium_LRS"
-      ],
-      "metadata": {
-        "description": "Type of new Storage Accounts (Standard_LRS, Standard_GRS, Standard_RAGRS or Premium_LRS) to be created to store VM disks"
-      },
-      "defaultValue": "Premium_LRS"
-    },
-    "vmSize": {
-      "type": "string",
-      "metadata": {
-        "description": "Size of the S2D VMs to be created"
-      },
-      "defaultValue": "Standard_D2S_v2"
-    },
-    "vmCount": {
-      "type": "int",
-      "minValue": 2,
-      "maxValue": 3,
-      "metadata": {
-        "description": "Number of S2D VMs to be created in cluster (Min=2, Max=3)"
-      },
-      "defaultValue": 2
-    },
-    "vmDiskSize": {
-      "type": "int",
-      "minValue": 128,
-      "maxValue": 1023,
-      "metadata": {
-        "description": "Size of each data disk in GB on each S2D VM (Min=128, Max=1023)"
-      },
-      "defaultValue": 1023
-    },
-    "vmDiskCount": {
-      "type": "int",
-      "minValue": 2,
-      "maxValue": 32,
-      "metadata": {
-        "description": "Number of data disks on each S2D VM (Min=2, Max=32). Ensure that the VM size you've selected will support this number of data disks."
-      },
-      "defaultValue": 2
-    },
-    "existingDomainName": {
-      "type": "string",
-      "metadata": {
-        "description": "DNS domain name for existing Active Directory domain"
-      }
-    },
-    "adminUsername": {
-      "type": "string",
-      "metadata": {
-        "description": "Name of the Administrator of the existing Active Directory Domain"
-      }
-    },
-    "adminPassword": {
-      "type": "securestring",
-      "minLength": 12,
-      "metadata": {
-        "description": "Password for the Administrator account of the existing Active Directory Domain"
-      }
-    },
-    "VMadminUsername": {
-      "type": "string",
-      "metadata": {
-        "description": "Name of the Administrator of the existing Active Directory Domain"
-      }
-    },
-    "VMadminPassword": {
-      "type": "securestring",
-      "minLength": 12,
-      "metadata": {
-        "description": "Password for the Administrator account of the existing Active Directory Domain"
-      }
-    },
-    "existingVirtualNetworkRGName": {
-      "type": "string",
-      "metadata": {
-        "description": "Resource Group Name for the existing VNET."
-      }
-    },
-    "existingVirtualNetworkName": {
-      "type": "string",
-      "metadata": {
-        "description": "Name of the existing VNET."
-      }
-    },
-    "existingSubnetName": {
-      "type": "string",
-      "metadata": {
-        "description": "Name of the existing subnet in the existing VNET to which the S2D VMs should be deployed"
-      }
-    },
-    "sofsName": {
-      "type": "string",
-      "metadata": {
-        "description": "Name of clustered Scale-Out File Server role"
-      },
-      "defaultValue": "fs01"
-    },
-    "shareName": {
-      "type": "string",
-      "metadata": {
-        "description": "Name of shared data folder on clustered Scale-Out File Server role"
-      },
-      "defaultValue": "data"
-    },
-    "_artifactsLocation": {
-      "type": "string",
-      "metadata": {
-        "description": "Location of resources that the script is dependent on such as linked templates and DSC modules"
-      },
-      "defaultValue": "https://raw.githubusercontent.com/Azure/azure-quickstart-templates/master/301-storage-spaces-direct"
-    },
-    "_artifactsLocationSasToken": {
-      "type": "securestring",
-      "metadata": {
-        "description": "The sasToken required to access _artifactsLocation.  When the template is deployed using the accompanying scripts, a sasToken will be automatically generated."
-      },
-      "defaultValue": ""
-    }
-  },
-  "variables": {
-    "subnetRef": "[resourceId(parameters('existingVirtualNetworkRGName'),'Microsoft.Network/virtualNetworks/subnets',parameters('existingVirtualNetworkName'),parameters('existingSubnetName'))]",
-    "deployS2DClusterTemplateURL": "https://raw.githubusercontent.com/vikhyat-gt-work/gt/master/NestedTemplates/deploy-s2d-cluster.json",
-    "deployS2DCluster": "deployS2DCluster"
-  },
-  "resources": [
-    {
-      "name": "[variables('deployS2DCluster')]",
-      "type": "Microsoft.Resources/deployments",
-      "apiVersion": "2015-01-01",
-      "dependsOn": [],
-      "properties": {
-        "mode": "Incremental",
-        "templateLink": {
-          "uri": "[variables('deployS2DClusterTemplateURL')]",
-          "contentVersion": "1.0.0.0"
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "namePrefix": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 8,
+            "metadata": {
+                "description": "Naming prefix for each new resource created. 2-char min, 8-char max, lowercase alphanumeric"
+            }
         },
-        "parameters": {
-          "namePrefix": {
-            "value": "[parameters('namePrefix')]"
-          },
-          "domainName": {
-            "value": "[parameters('existingDomainName')]"
-          },
-          "adminUsername": {
-            "value": "[parameters('adminUsername')]"
-          },
-          "adminPassword": {
-            "value": "[parameters('adminPassword')]"
-          },
-          "VMadminUsername": {
-            "value": "[parameters('adminUsername')]"
-          },
-          "VMadminPassword": {
-            "value": "[parameters('adminPassword')]"
-          },
-
-          "storageAccountType": {
-            "value": "[parameters('storageAccountType')]"
-          },
-          "nicSubnetUri": {
-            "value": "[variables('subnetRef')]"
-          },
-          "vmSize": {
-            "value": "[parameters('vmSize')]"
-          },
-          "vmCount": {
-            "value": "[parameters('vmCount')]"
-          },
-          "vmDiskSize": {
-            "value": "[parameters('vmDiskSize')]"
-          },
-          "vmDiskCount": {
-            "value": "[parameters('vmDiskCount')]"
-          },
-          "sofsName": {
-            "value": "[parameters('sofsName')]"
-          },
-          "shareName": {
-            "value": "[parameters('shareName')]"
-          },
-          "_artifactsLocation": {
-            "value": "[parameters('_artifactsLocation')]"
-          },
-          "_artifactsLocationSasToken": {
-            "value": "[parameters('_artifactsLocationSasToken')]"
-          }
+        "storageAccountType": {
+            "type": "string",
+            "allowedValues": [
+                "Standard_LRS",
+                "Standard_GRS",
+                "Standard_RAGRS",
+                "Premium_LRS"
+            ],
+            "metadata": {
+                "description": "Type of new Storage Accounts (Standard_LRS, Standard_GRS, Standard_RAGRS or Premium_LRS) to be created to store VM disks"
+            },
+            "defaultValue": "Premium_LRS"
+        },
+        "vmSize": {
+            "type": "string",
+            "metadata": {
+                "description": "Size of the S2D VMs to be created"
+            },
+            "defaultValue": "Standard_DS2_v2"
+        },
+        "vmCount": {
+            "type": "int",
+            "minValue": 2,
+            "maxValue": 8,
+            "metadata": {
+                "description": "Number of S2D VMs to be created in cluster (Min=2, Max=8)"
+            },
+            "defaultValue": 2
+        },
+        "vmDiskSize": {
+            "type": "int",
+            "minValue": 128,
+            "maxValue": 1023,
+            "metadata": {
+                "description": "Size of each data disk in GB on each S2D VM (Min=128, Max=1023)"
+            },
+            "defaultValue": 1023
+        },
+        "vmDiskCount": {
+            "type": "int",
+            "minValue": 2,
+            "maxValue": 32,
+            "metadata": {
+                "description": "Number of data disks on each S2D VM (Min=2, Max=32). Ensure that the VM size you've selected will support this number of data disks."
+            },
+            "defaultValue": 2
+        },
+        "existingDomainName": {
+            "type": "string",
+            "metadata": {
+                "description": "DNS domain name for existing Active Directory domain"
+            }
+        },
+        "adminUsername": {
+            "type": "string",
+            "metadata": {
+                "description": "Name for the Administrator of the VM"
+            }
+        },
+        "adminPassword": {
+            "type": "securestring",
+            "minLength": 12,
+            "metadata": {
+                "description": "Password for the Administrator account for the VM"
+            }
+        },
+      "VmAdminUsername": {
+            "type": "string",
+            "metadata": {
+                "description": "Name for the Administrator of the VM"
+            }
+        },
+        "VmAdminPassword": {
+            "type": "securestring",
+            "minLength": 12,
+            "metadata": {
+                "description": "Password for the Administrator account for the VM"
+            }
+        },
+        "existingVirtualNetworkRGName": {
+            "type": "string",
+            "metadata": {
+                "description": "Resource Group Name for the existing VNET."
+            }
+        },
+        "existingVirtualNetworkName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the existing VNET."
+            }
+        },
+        "existingSubnetName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the existing subnet in the existing VNET to which the S2D VMs should be deployed"
+            }
+        },
+        "sofsName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of clustered Scale-Out File Server role"
+            },
+            "defaultValue": "fs01"
+        },
+        "shareName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of shared data folder on clustered Scale-Out File Server role"
+            },
+            "defaultValue": "data"
+        },
+        "_artifactsLocation": {
+            "type": "string",
+            "metadata": {
+                "description": "Location of resources that the script is dependent on such as linked templates and DSC modules"
+            },
+            "defaultValue": "https://github.com/vikhyat-gt-work/gt.git"
+        },
+        "_artifactsLocationSasToken": {
+            "type": "securestring",
+            "metadata": {
+                "description": "The sasToken required to access _artifactsLocation.  When the template is deployed using the accompanying scripts, a sasToken will be automatically generated."
+            },
+            "defaultValue": ""
         }
-      }
+    },
+    "variables": {
+        "subnetRef": "[resourceId(parameters('existingVirtualNetworkRGName'),'Microsoft.Network/virtualNetworks/subnets',parameters('existingVirtualNetworkName'),parameters('existingSubnetName'))]",
+        "deployS2DClusterTemplateURL": "https://raw.githubusercontent.com/vikhyat-gt-work/gt/master/NestedTemplates/deploy-s2d-cluster.json"
+    },
+    "resources": [
+        {
+            "name": "[variables('deployS2DCluster')]",
+            "type": "Microsoft.Resources/deployments",
+            "apiVersion": "2015-01-01",
+            "dependsOn": [],
+            "properties": {
+                "mode": "Incremental",
+                "templateLink": {
+                    "uri": "[variables('deployS2DClusterTemplateURL')]",
+                    "contentVersion": "1.0.0.0"
+                },
+                "parameters": {
+                    "namePrefix": {
+                        "value": "[parameters('namePrefix')]"
+                    },
+                    "domainName": {
+                        "value": "[parameters('existingDomainName')]"
+                    },
+                    "adminUsername": {
+                        "value": "[parameters('adminUsername')]"
+                    },
+                    "adminPassword": {
+                        "value": "[parameters('adminPassword')]"
+                    },
+                    "VmAdminUsername": {
+                        "value": "[parameters('VmAdminUsername')]"
+                    },
+                    "VmAdminPassword": {
+                        "value": "[parameters('VmAdminPassword')]"
+                    },
+                    "storageAccountType": {
+                        "value": "[parameters('storageAccountType')]"
+                    },
+                    "nicSubnetUri": {
+                        "value": "[variables('subnetRef')]"
+                    },
+                    "vmSize": {
+                        "value": "[parameters('vmSize')]"
+                    },
+                    "vmCount": {
+                        "value": "[parameters('vmCount')]"
+                    },
+                    "vmDiskSize": {
+                        "value": "[parameters('vmDiskSize')]"
+                    },
+                    "vmDiskCount": {
+                        "value": "[parameters('vmDiskCount')]"
+                    },
+                    "sofsName": {
+                        "value": "[parameters('sofsName')]"
+                    },
+                    "shareName": {
+                        "value": "[parameters('shareName')]"
+                    },
+                    "_artifactsLocation": {
+                        "value": "[parameters('_artifactsLocation')]"
+                    },
+                    "_artifactsLocationSasToken": {
+                        "value": "[parameters('_artifactsLocationSasToken')]"
+                    }
+                }
+            }
+        }
+    ],
+    "outputs": {
+        "sofsPath": {
+            "type": "string",
+            "value": "[concat('\\\\',reference(variables('deployS2DCluster')).outputs.sofsName.value,'\\',reference(variables('deployS2DCluster')).outputs.shareName.value)]"
+        }
     }
-  ],
-  "outputs": {
-    "sofsPath": {
-      "type": "string",
-      "value": "[concat('\\\\',reference(variables('deployS2DCluster')).outputs.sofsName.value,'\\',reference(variables('deployS2DCluster')).outputs.shareName.value)]"
-    }
-  }
 }
