@@ -21,7 +21,7 @@
             "metadata": {
                 "description": "Type of new Storage Accounts (Standard_LRS, Standard_GRS, Standard_RAGRS or Premium_LRS) to be created to store VM disks"
             },
-            "defaultValue": "Premium_LRS"
+            "defaultValue": "Standard_LRS"
         },
         "vmSize": {
             "type": "string",
@@ -76,17 +76,17 @@
                 "description": "Password for the Administrator account for the VM"
             }
         },
-      "VmAdminUsername": {
+        "vmAdminUsername": {
             "type": "string",
             "metadata": {
-                "description": "Name for the Administrator of the VM"
+                "description": "Name for the Domain Administrator of the existing Azure AD Domain Service"
             }
         },
-        "VmAdminPassword": {
+        "vmAdminPassword": {
             "type": "securestring",
-            "minLength": 12,
+            "minLength": 6,
             "metadata": {
-                "description": "Password for the Administrator account for the VM"
+                "description": "Password for the Domain Administrator of the existing Azure AD Domain Service"
             }
         },
         "existingVirtualNetworkRGName": {
@@ -112,7 +112,7 @@
             "metadata": {
                 "description": "Name of clustered Scale-Out File Server role"
             },
-            "defaultValue": "fs01"
+            "defaultValue": "gt"
         },
         "shareName": {
             "type": "string",
@@ -138,7 +138,8 @@
     },
     "variables": {
         "subnetRef": "[resourceId(parameters('existingVirtualNetworkRGName'),'Microsoft.Network/virtualNetworks/subnets',parameters('existingVirtualNetworkName'),parameters('existingSubnetName'))]",
-        "deployS2DClusterTemplateURL": "https://raw.githubusercontent.com/vikhyat-gt-work/gt/master/NestedTemplates/deploy-s2d-cluster.json"
+        "deployS2DClusterTemplateURL": "https://raw.githubusercontent.com/vikhyat-gt-work/gt/master/NestedTemplates/deploy-s2d-cluster.json",
+        "deployS2DCluster": "deployS2DCluster"
     },
     "resources": [
         {
@@ -165,11 +166,11 @@
                     "adminPassword": {
                         "value": "[parameters('adminPassword')]"
                     },
-                    "VmAdminUsername": {
-                        "value": "[parameters('VmAdminUsername')]"
+                    "vmAdminUsername": {
+                        "value": "[parameters('vmAdminUsername')]"
                     },
-                    "VmAdminPassword": {
-                        "value": "[parameters('VmAdminPassword')]"
+                    "vmAdminPassword": {
+                        "value": "[parameters('vmAdminPassword')]"
                     },
                     "storageAccountType": {
                         "value": "[parameters('storageAccountType')]"
