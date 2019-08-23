@@ -30,13 +30,13 @@
       }
     },
 },
-    "VMadminUsername": {
+    "VmAdminUsername": {
       "type": "string",
       "metadata": {
         "description": "Name of the Administrator of the existing Active Directory Domain"
       }
     },
-    "VMadminPassword": {
+    "VmAdminPassword": {
       "type": "securestring",
       "minLength": 12,
       "metadata": {
@@ -252,11 +252,11 @@
           "adminPassword": {
             "value": "[parameters('adminPassword')]"
           },
-          "VMadminUsername": {
-            "value": "[parameters('VMadminUsername')]"
+          "VmAdminUsername": {
+            "value": "[parameters('VmAdminUsername')]"
           },
-          "VMadminPassword": {
-            "value": "[parameters('VMadminPassword')]"
+          "VmAdminPassword": {
+            "value": "[parameters('VmAdminPassword')]"
           },
 
           "_artifactsLocation": {
